@@ -42,13 +42,17 @@ RTC_DS3231 RTC;      //we are using the DS3231 RTC
 // Modem config
 #define CLIENT_ADDRESS 1
 #define SERVER_ADDRESS 2
-#define CONFIG_NODES false
+//#define CONFIG_NODES 1
 #define FORCE_DEFAULT_VALUE false
 #define DEFAULT_CHANNEL 915
 #define LORAMODE 0
 #define MAX_DBM 13
+
 // Singleton instance of the radio driver
 RH_RF95 driver;
+
+// Class to manage message delivery and receipt, using the driver declared above
+RHReliableDatagram manager(driver, CLIENT_ADDRESS);
 
 uint8_t node_address = CLIENT_ADDRESS;
 int loraMode = LORAMODE;
@@ -68,7 +72,7 @@ struct Radioconfig {
   uint8_t SetWU_Min;
   uint8_t overwrite;
  // can add other fields such as LoRa mode,...
-};Radioconfig my_Radio1272config;
+};Radioconfig my_Radioconfig;
 
 //
 //////////////////////////////////////////////////////////////////////////////////////
@@ -77,6 +81,7 @@ struct Radioconfig {
 //////////////////////////////////////////////////////////////////////////////////////
 // Variables
 uint8_t data[250] = "Node 1";
+uint8_t message[100];
 // Dont put this on the stack:
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 
@@ -97,16 +102,9 @@ int packetNumber = 0;
 //////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////
-// arduino setup function
-void setup() 
-{
-   Serial.println("CONFIGURING NODE 1");
-
-  Serial.begin(9600);
-  while (!Serial) ; // Wait for serial port to be available
-
-//////////////////////////////////////////////////////////////////////////////////////
+//
+void loadConfig(){
+  //////////////////////////////////////////////////////////////////////////////////////
 // get config from EEPROM
   EEPROM.get(0, my_Radioconfig);
 
@@ -134,7 +132,7 @@ void setup()
         my_Radioconfig.overwrite=0;
         EEPROM.put(0, my_Radioconfig);
 
-        node_addr=my_Radioconfig.addr;
+        node_address=my_Radioconfig.addr;
         idlePeriodInMin=my_Radioconfig.idle_period;
         setNewChannel=my_Radioconfig.channel; 
         loraMode=my_Radioconfig.loramode;
@@ -146,7 +144,7 @@ void setup()
         if (my_Radioconfig.addr!=0 && my_Radioconfig.overwrite==1) {
           
             Serial.println("Used stored address");
-            node_addr=my_Radioconfig.addr;        
+            node_address=my_Radioconfig.addr;        
         }
         else
             Serial.println("Stored node addr is null"); 
@@ -163,11 +161,11 @@ void setup()
         // get back the channel
         if (my_Radioconfig.channel!=0 && my_Radioconfig.overwrite==1) {
           
-            Serial.println("Used stored channel\n");
+            Serial.println("Used stored channel");
             setNewChannel=my_Radioconfig.channel;        
         }
         else
-            Serial.println("Stored channel is null\n");     
+            Serial.println("Stored channel is null");     
 
         // get back the loramode
         if (my_Radioconfig.loramode!=0 && my_Radioconfig.overwrite==1) {
@@ -176,7 +174,7 @@ void setup()
             loraMode=my_Radioconfig.loramode;        
         }
         else
-            Serial.println("Stored loramode is null\n"); 
+            Serial.println("Stored loramode is null"); 
 
         // get back the powerlevel
         if (my_Radioconfig.powerlevel!=0 && my_Radioconfig.overwrite==1) {
@@ -208,7 +206,7 @@ void setup()
     #endif  
         
         Serial.println("Using node addr of ");
-        Serial.print(node_addr,DEC);
+        Serial.print(node_address,DEC);
         
         Serial.print("Using idle period of ");
         Serial.println(idlePeriodInMin,DEC);
@@ -234,43 +232,54 @@ void setup()
     }
 //
 //////////////////////////////////////////////////////////////////////////////////////
-
-
-// Class to manage message delivery and receipt, using the driver declared above
-  RHReliableDatagram manager(driver, node_address);
   
+}
+
+
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+// arduino setup function
+void setup() 
+{
+   Serial.println("CONFIGURING NODE 1");
+
+  Serial.begin(9600);
+  while (!Serial) ; // Wait for serial port to be available
+
+  loadConfig();
+
   if (!manager.init()){ // Defaults after init are 915.0MHz, 13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
     Serial.println("INIT FAIL..! reboot NODE..!!");
     while(true){
  
     }
   }
-  
-  
-  
-  
-  manager.setModeIdle();
+   
+  driver.setModeIdle();
 
   switch (loraMode){
     case 0:
-            if(driver.setModemConfig(Bw125Cr45Sf128))
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128))
               break;
             else
               Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
     case 1:
-            if(driver.setModemConfig(Bw500Cr45Sf128))
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128))
               break;
             else
               Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
 
    case 2:
-            if(driver.setModemConfig(Bw31_25Cr48Sf51))
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw31_25Cr48Sf512))
               break;
             else
               Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
 
    case 3:
-            if(driver.setModemConfig(Bw125Cr48Sf4096))
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr48Sf4096))
               break;
             else
               Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
@@ -281,6 +290,8 @@ void setup()
            break;
     
   }
+
+  driver.setThisAddress(node_address);
   
   driver.setPreambleLength(8); // Default is 8
  
@@ -447,10 +458,12 @@ void loop()
   if (manager.sendtoWait(data, sizeof(data), SERVER_ADDRESS))
   {
     Serial.println("Sent data OK..!");
-    // Now wait for a reply from the server
+
+    //////////////////////////////////////////////////////////
+    // Window of reception
     uint8_t len = sizeof(buf);
     uint8_t from;   
-    if (manager.recvfromAckTimeout(buf, &len, 2000, &from))
+    if (manager.recvfromAckTimeout(buf, &len, 3000, &from))
     {
       Serial.print("got reply from CENTRAL NODE");
       Serial.print(from, HEX);
@@ -461,6 +474,9 @@ void loop()
     {
       Serial.println("No reply, is CENTRAL NODE running?");
     }
+    //
+    //////////////////////////////////////////////////////////
+  
   }
   else
     Serial.println("sendtoWait failed");
@@ -472,6 +488,7 @@ void loop()
 #ifdef CONFIG_NODES
 memset(message,'0',100);
     if(configNodes){  
+      
     EEPROM.get(0, my_Radioconfig);
   
      delay(2000);
@@ -481,44 +498,35 @@ memset(message,'0',100);
      r_size=sprintf((char*)message, sync);
 
       int rcv=3;       
-      uint8_t p_type=PKT_TYPE_DATA;
-      sx1272.setPacketType(p_type);
+     
       
     do{
 
       rcv=30;
 
       delay(5000);
-      
-      sx1272.CarrierSense();
+ 
          
-      // Send message to the gateway and print the result
-      // with the app key if this feature is enabled
-      #ifdef WITH_ACK
-            int n_retry=NB_RETRIES;
-            
-            do {
-              e = sx1272.sendPacketTimeoutACK(8, message,r_size);//DEFAULT_DEST_ADDR
+      if (manager.sendtoWait(message, r_size, SERVER_ADDRESS))
+      {
       
-              if (e==3)
-                PRINT_CSTSTR("%s","No ACK");
-              
-              n_retry--;
-              
-              if (n_retry)
-                PRINT_CSTSTR("%s","Retry");
-              else
-                PRINT_CSTSTR("%s","Abort");  
-                
-            } while (e && n_retry);          
-      #else      
-            e = sx1272.sendPacketTimeout(8,message,r_size);
+      // rutine of update
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      }  
+         //   e = sx1272.sendPacketTimeout(8,message,r_size);
 
-      #endif
 
       
-      PRINT_CSTSTR("%s","Packet sent, state ");
-      PRINT_VALUE("%d", e);
+      Serial.println("Packet sent, state ");
+      PRINT_VALUE(e,DEC);
       PRINTLN;
   
       PRINT_CSTSTR("%s","Sending ");
