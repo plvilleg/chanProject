@@ -16,12 +16,12 @@
 
 //////////////////////////////////////////////////////////////////////////////////////
 //POWER SAVE
-#define LOW_POWER 0
+//#define LOW_POWER 0
 int SetWU_Hour = 18;
 int SetWU_Min = 35;
 
 const int wakeUpPin = 2;  // Use pin 2 as wake up pin
-bool hibernate=true;
+bool hibernate=false;
 //
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -40,13 +40,14 @@ RTC_DS3231 RTC;      //we are using the DS3231 RTC
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Modem config
-#define CLIENT_ADDRESS 1
+#define CLIENT_ADDRESS 3
 #define SERVER_ADDRESS 2
-//#define CONFIG_NODES 1
+#define CONFIG_NODES 1
 #define FORCE_DEFAULT_VALUE false
-#define DEFAULT_CHANNEL 915
+#define DEFAULT_CHANNEL 915.00
 #define LORAMODE 0
-#define MAX_DBM 13
+#define MAX_DBM 5
+#define DEBUG_MODE 1
 
 // Singleton instance of the radio driver
 RH_RF95 driver;
@@ -74,27 +75,43 @@ struct Radioconfig {
  // can add other fields such as LoRa mode,...
 };Radioconfig my_Radioconfig;
 
+const uint32_t CH_00_900 = 903.08; // channel 00, central freq = 903.08MHz
+const uint32_t CH_01_900 = 905.24; // channel 01, central freq = 905.24MHz
+const uint32_t CH_02_900 = 907.40; // channel 02, central freq = 907.40MHz
+const uint32_t CH_03_900 = 909.56; // channel 03, central freq = 909.56MHz
+const uint32_t CH_04_900 = 911.72; // channel 04, central freq = 911.72MHz
+const uint32_t CH_05_900 = 913.88; // channel 05, central freq = 913.88MHz
+const uint32_t CH_06_900 = 916.04; // channel 06, central freq = 916.04MHz
+const uint32_t CH_07_900 = 918.20; // channel 07, central freq = 918.20MHz
+const uint32_t CH_08_900 = 920.36; // channel 08, central freq = 920.36MHz
+const uint32_t CH_09_900 = 922.52; // channel 09, central freq = 922.52MHz
+const uint32_t CH_10_900 = 924.68; // channel 10, central freq = 924.68MHz
+const uint32_t CH_11_900 = 926.84; // channel 11, central freq = 926.84MHz
+const uint32_t CH_12_900 = 915.00; // default channel 915MHz, the module is configured with it
+
 //
 //////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Variables
-uint8_t data[250] = "Node 1";
-uint8_t message[100];
+uint8_t data[100] = "Node 1";
+uint8_t message[RH_RF95_MAX_MESSAGE_LEN];
 // Dont put this on the stack:
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 
 // CHANGE HERE THE TIME IN MINUTES BETWEEN 2 READING & TRANSMISSION
 unsigned int idlePeriodInMin = 60; //20
 
+#ifdef LOW_POWER
 unsigned int nCycle = idlePeriodInMin*60/LOW_POWER_PERIOD;
+#endif
 
 //Amount of data obtained
 int setAmountoOfData = 10;
 int numOfData = setAmountoOfData;
 
-bool configNodes = false;
+bool configNodes = true;
 int numParam = 0;
 
 int packetNumber = 0;
@@ -205,8 +222,8 @@ void loadConfig(){
                    
     #endif  
         
-        Serial.println("Using node addr of ");
-        Serial.print(node_address,DEC);
+        Serial.print("Using node addr of ");
+        Serial.println(node_address,DEC);
         
         Serial.print("Using idle period of ");
         Serial.println(idlePeriodInMin,DEC);
@@ -240,11 +257,39 @@ void loadConfig(){
 //////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////
+//
+#ifdef CONFIG_NODES
+long getCmdValue(int &i, char* strBuff=NULL) {
+  
+    char seqStr[7]="******";
+    
+    int j=0;
+    // character '#' will indicate end of cmd value
+    while ((char)message[i]!='#' && (i < strlen((char*)message)) && j<strlen(seqStr)) {
+            seqStr[j]=(char)message[i];
+            i++;
+            j++;
+    }
+    
+    // put the null character at the end
+    seqStr[j]='\0';
+    
+    if (strBuff) {
+            strcpy(strBuff, seqStr);        
+    }
+    else
+            return (atol(seqStr));
+}   
+#endif
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 // arduino setup function
 void setup() 
 {
-   Serial.println("CONFIGURING NODE 1");
+  Serial.println("CONFIGURING NODE 1");
 
   Serial.begin(9600);
   while (!Serial) ; // Wait for serial port to be available
@@ -257,7 +302,7 @@ void setup()
  
     }
   }
-   
+  
   driver.setModeIdle();
 
   switch (loraMode){
@@ -291,11 +336,19 @@ void setup()
     
   }
 
+    
   driver.setThisAddress(node_address);
+
+  #if (DEBUG_MODE > 0)
+      Serial.print("Node address is: ");
+      Serial.println(manager.thisAddress(),DEC);
+  
+  #endif
   
   driver.setPreambleLength(8); // Default is 8
  
-  driver.setFrequency(setNewChannel);
+  if(!driver.setFrequency(setNewChannel))
+    Serial.println("Error in frequency setting");
  
   driver.setTxPower(powerlevel);
   
@@ -452,6 +505,11 @@ void loop()
   sprintf((char*)data, final_str);
 
    Serial.println("Sensed..! OK");
+
+   #if (DEBUG_MODE > 0)
+
+  
+   #endif
   
   // Send a message to manager_server
   Serial.println("Sending data..!");
@@ -486,105 +544,70 @@ void loop()
 //////////////////////////////////////////////////////////////////////////////////////
 //
 #ifdef CONFIG_NODES
-memset(message,'0',100);
+    memset(message,'\0',RH_RF95_MAX_MESSAGE_LEN);
     if(configNodes){  
-      
+    uint16_t  r_size;  
     EEPROM.get(0, my_Radioconfig);
   
-     delay(2000);
-     char sync[]="(@N";
+    delay(2000);
+    char sync[]="(@N";
      
-     sprintf(sync,"%s%d",sync,my_Radioconfig.addr);
-     r_size=sprintf((char*)message, sync);
-
-      int rcv=3;       
-     
-      
+    sprintf(sync,"%s%d",sync,my_Radioconfig.addr);
+    r_size=sprintf((char*)message, sync);
+    
     do{
-
-      rcv=30;
-
-      delay(5000);
- 
-         
+            
       if (manager.sendtoWait(message, r_size, SERVER_ADDRESS))
       {
       
       // rutine of update
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      }  
-         //   e = sx1272.sendPacketTimeout(8,message,r_size);
+        Serial.print("Sending: ");
+        Serial.println((char*)(message)); 
+        Serial.println("Packet sent OK! ");
+        
+        memset(message,'0',RH_RF95_MAX_MESSAGE_LEN);
+        Serial.println("Wait for config message...");
 
+        uint8_t from;
+        
+        if (manager.recvfromAckTimeout(message, RH_RF95_MAX_MESSAGE_LEN, 3000, &from))
+        {
+          Serial.print("got message config from GW: ");
+          Serial.println((char*)message);
+          driver.setModeIdle();
 
-      
-      Serial.println("Packet sent, state ");
-      PRINT_VALUE(e,DEC);
-      PRINTLN;
-  
-      PRINT_CSTSTR("%s","Sending ");
-      PRINT_STR("%s",(char*)(message)); //
-      PRINTLN;  
-
-
-      PRINT_CSTSTR("%s","Wait for ");
-      PRINT_VALUE("%d", DELAY_BEFORE_RCVW-3000);
-      PRINTLN;
-      //wait a bit
-      //delay(DELAY_BEFORE_RCVW-4000);
-
-      e = 1;
-      
-     // wait for incoming packets
-      while(rcv > 0){
-        e = sx1272.receivePacketMAXTimeout();//receivePacketMAXTimeout();
-        if(e==0)
-          rcv=-1;
-
-        PRINT_CSTSTR("%s","Wait for incoming packet\n");
-        rcv--;
-      }
-    
-      if (!e){
          int i=0;
          int cmdValue;
-         uint8_t tmp_length;
+    //     uint8_t tmp_length;
+//         sx1272.getSNR();
+//         sx1272.getRSSIpacket();
+//         
+//         tmp_length=sx1272._payloadlength;
+//
+//         sprintf((char*)message, "^p%d,%d,%d,%d,%d,%d,%d\n",
+//                   sx1272.packet_received.dst,
+//                   sx1272.packet_received.type,                   
+//                   sx1272.packet_received.src,
+//                   sx1272.packet_received.packnum, 
+//                   tmp_length,
+//                   sx1272._SNR,
+//                   sx1272._RSSIpacket);
+//                                   
+//               
+//         
+//         for ( ; i<tmp_length; i++) {
+//          // PRINT_STR("%c",(char)sx1272.packet_received.data[i]);
+//           
+//           message[i]=(char)sx1272.packet_received.data[i];
+//         }
+//
+//         message[i]='\0';
 
-         sx1272.getSNR();
-         sx1272.getRSSIpacket();
-         
-         tmp_length=sx1272._payloadlength;
-
-         sprintf((char*)message, "^p%d,%d,%d,%d,%d,%d,%d\n",
-                   sx1272.packet_received.dst,
-                   sx1272.packet_received.type,                   
-                   sx1272.packet_received.src,
-                   sx1272.packet_received.packnum, 
-                   tmp_length,
-                   sx1272._SNR,
-                   sx1272._RSSIpacket);
-                                   
-               
-         
-         for ( ; i<tmp_length; i++) {
-          // PRINT_STR("%c",(char)sx1272.packet_received.data[i]);
-           
-           message[i]=(char)sx1272.packet_received.data[i];
-         }
-
-         message[i]='\0';
-         PRINT_STR("%s :",(char*)message); 
-         PRINTLN;
-         PRINT_VALUE("%d \n", tmp_length);      
-         PRINTLN;
-         FLUSHOUTPUT;   
+//         PRINT_STR("%s :",(char*)message); 
+//         PRINTLN;
+//         PRINT_VALUE("%d \n", tmp_length);      
+//         PRINTLN;
+//         FLUSHOUTPUT;   
 
         i=0;
 
@@ -592,7 +615,7 @@ memset(message,'0',100);
         //
         if (message[i]=='/' && message[i+1]=='@') {
     
-            PRINT_CSTSTR("%s","Parsing command\n");      
+            Serial.println("Parsing command");      
             i=i+2;   
 
           while(message[i]!='#'){
@@ -610,28 +633,26 @@ memset(message,'0',100);
                               cmdValue = 250;
                       // cannot set addr lower than 2 since 0 is broadcast and 1 is for gateway
                       if (cmdValue < 2)
-                              cmdValue = 2;
+                              cmdValue = 3;
                       // set node addr        
-                      node_addr=cmdValue; 
-                      #ifdef WITH_AES
-                      DevAddr[3] = (unsigned char)node_addr;
-                      #endif
-                      
-                      PRINT_CSTSTR("%s","Set LoRa node addr to ");
-                      PRINT_VALUE("%d", node_addr);  
-                      PRINTLN;
-                      // Set the node address and print the result
-                      e = sx1272.setNodeAddress(node_addr);
-                      PRINT_CSTSTR("%s","Setting LoRa node addr: state ");
-                      PRINT_VALUE("%d",e);     
-                      PRINTLN;           
+                      node_address=cmdValue; 
 
-                      #ifdef WITH_EEPROM
+                      driver.setModeIdle();
+
+                      // Set the node address and print the result                                           
+                      Serial.print("Setting LoRa node address to ");
+                      Serial.println(node_address); 
+                      Serial.println("..."); 
+                      
+                      driver.setThisAddress(node_address);
+                      Serial.print("LoRa node address set to: ");
+                      Serial.println(manager.thisAddress(),DEC);
+           
                       // save new node_addr in case of reboot
-                      my_Radioconfig.addr=node_addr;
+                      my_Radioconfig.addr=node_address;
                       my_Radioconfig.overwrite=1;
                       EEPROM.put(0, my_Radioconfig);
-                      #endif
+            
 
                       break;        
 
@@ -646,18 +667,16 @@ memset(message,'0',100);
                               cmdValue = idlePeriodInMin;
                       // idlePeriodInMin      
                       idlePeriodInMin=cmdValue; 
-                      
-                      PRINT_CSTSTR("%s","Set duty-cycle to ");
-                      PRINT_VALUE("%d", idlePeriodInMin);  
-                      PRINTLN;         
 
-                      #ifdef WITH_EEPROM
+                 
+                      
+                      Serial.print("Set duty-cycle to ");
+                      Serial.println(idlePeriodInMin,DEC);  
+                     
                       // save new idle_period in case of reboot
                       my_Radioconfig.idle_period=idlePeriodInMin;
                       my_Radioconfig.overwrite=1;
                       EEPROM.put(0, my_Radioconfig);
-                      #endif
-
                       break;  
 
                   // Hour of the day to wakeUp 0 - 23
@@ -676,17 +695,14 @@ memset(message,'0',100);
                       // WakeUp hour      
                       SetWU_Hour=cmdValue; 
                       
-                      PRINT_CSTSTR("%s","Set hour to ");
-                      PRINT_VALUE("%d", SetWU_Hour);  
-                      PRINTLN;    
-
-                      #ifdef WITH_EEPROM
-                        // save new SetWU_Hour in case of reboot
-                        my_Radioconfig.SetWU_Hour=SetWU_Hour;
-                        my_Radioconfig.overwrite=1;
-                        EEPROM.put(0, my_Radioconfig);
-                      #endif
-
+                      
+                      Serial.print("Set hour to: ");
+                      Serial.println(SetWU_Hour,DEC);  
+                          
+                      // save new SetWU_Hour in case of reboot
+                      my_Radioconfig.SetWU_Hour=SetWU_Hour;
+                      my_Radioconfig.overwrite=1;
+                      EEPROM.put(0, my_Radioconfig);
                       break;  
 
 
@@ -706,17 +722,13 @@ memset(message,'0',100);
                       // WakeUp minute      
                       SetWU_Min=cmdValue; 
                       
-                      PRINT_CSTSTR("%s","Set minute to ");
-                      PRINT_VALUE("%d", SetWU_Min);  
-                      PRINTLN;  
-
-                      #ifdef WITH_EEPROM
-                        // save new SetWU_Min in case of reboot
-                        my_Radioconfig.SetWU_Min=SetWU_Min;
-                        my_Radioconfig.overwrite=1;
-                        EEPROM.put(0, my_Radioconfig);
-                      #endif
-
+                      Serial.print("Set minute to ");
+                      Serial.println(SetWU_Min,DEC);  
+                    
+                      // save new SetWU_Min in case of reboot
+                      my_Radioconfig.SetWU_Min=SetWU_Min;
+                      my_Radioconfig.overwrite=1;
+                      EEPROM.put(0, my_Radioconfig);
                       break;  
 
 
@@ -733,10 +745,8 @@ memset(message,'0',100);
                       // WakeUp hour      
                       setAmountoOfData=cmdValue; 
                       
-                      PRINT_CSTSTR("%s","Set amount of data to ");
-                      PRINT_VALUE("%d", setAmountoOfData);  
-                      PRINTLN;         
-
+                      Serial.print("Set amount of data to ");
+                      Serial.println(setAmountoOfData,DEC);  
                       break;              
 
 
@@ -746,6 +756,7 @@ memset(message,'0',100);
                       i++;
                       //uint32_t newChannel = DEFAULT_CHANNEL;
                       cmdValue=getCmdValue(i);
+                      
                       
                       // cannot set channel greater than 12
                       if (cmdValue > 12)
@@ -794,23 +805,19 @@ memset(message,'0',100);
                           setNewChannel = CH_12_900;
                       
                     
-                      PRINT_CSTSTR("%s","Set LoRa node channel to ");
-                      PRINT_VALUE("%d", cmdValue);  
-                      PRINTLN;
-                      
-                     // Select frequency channel
-                     e = sx1272.setChannel(setNewChannel);
-                     PRINT_CSTSTR("%s","Setting Channel: state ");
-                     PRINT_VALUE("%d", e);
-                     PRINTLN;        
-
-                      #ifdef WITH_EEPROM
+                      Serial.print("Set LoRa node channel to ");
+                      Serial.println(cmdValue,DEC);  
+                      driver.setModeIdle();
+                                           
+                      // Select frequency channel
+                      if(!driver.setFrequency(setNewChannel))
+                          Serial.println("Error in frequency setting");
+                      Serial.println("Setting Channel OK");
+          
                       // save new node_addr in case of reboot
                       my_Radioconfig.channel=setNewChannel;
                       my_Radioconfig.overwrite=1;
                       EEPROM.put(0, my_Radioconfig);
-                      #endif
-
                       break; 
 
 
@@ -820,7 +827,6 @@ memset(message,'0',100);
                     i++;
                     cmdValue=getCmdValue(i);
 
-
                     // cannot set channel greater than 12
                     if (cmdValue > 14)
                       cmdValue = MAX_DBM;
@@ -828,21 +834,14 @@ memset(message,'0',100);
                     if (cmdValue < 0)
                       cmdValue = 5;
                     
-                    e = sx1272.setPowerDBM((uint8_t)cmdValue);
-                    PRINT_CSTSTR("%s","Setting Power: state ");
-                    PRINT_VALUE("%d", e);
-                    PRINTLN;
+                    driver.setTxPower(cmdValue);
+                    Serial.print("Set Power");
+                                      
+                    // save new power in case of reboot
+                    my_Radioconfig.powerlevel=cmdValue;
+                    my_Radioconfig.overwrite=1;
+                    EEPROM.put(0, my_Radioconfig);
                    
-                    if(e!=0)
-                      PRINT_CSTSTR("%s","Invalid Power.\n");
-
-                    #ifdef WITH_EEPROM
-                      // save new power in case of reboot
-                      my_Radioconfig.powerlevel=cmdValue;
-                      my_Radioconfig.overwrite=1;
-                      EEPROM.put(0, my_Radioconfig);
-                    #endif 
-
                     break;                                                               
 
               // Set the power of trasmition
@@ -850,29 +849,48 @@ memset(message,'0',100);
                     i++;
                     cmdValue=getCmdValue(i);
                     // cannot set mode greater than 11 (11 being the LoRaWAN test mode)
-                    if (cmdValue > 11)
-                            cmdValue = 4;
-                    // cannot set mode lower than 0
-                    if (cmdValue < 0)
-                            cmdValue = 4;
-                    // set dest addr        
-                    loraMode=cmdValue; 
-                    
-                    PRINT_CSTSTR("%s","^$Set LoRa mode to ");
-                    PRINT_VALUE("%d",loraMode);
-                    PRINTLN;
-                    // Set transmission mode and print the result
-                   // e = sx1272.setMode(loraMode);
-                    PRINT_CSTSTR("%s","^$LoRa mode: state ");
-                    PRINT_VALUE("%d",e);  
-                    PRINTLN;
+                   
+                    driver.setModeIdle();
 
-                    #ifdef WITH_EEPROM
-                      // save new operation mode in case of reboot
-                      my_Radioconfig.loramode=loraMode;
-                      my_Radioconfig.overwrite=1;
-                      EEPROM.put(0, my_Radioconfig);
-                   #endif
+                    switch (cmdValue){
+                      case 0:
+                              if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128))
+                                break;
+                              else
+                                Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+                      case 1:
+                              if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128))
+                                break;
+                              else
+                                Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+                  
+                     case 2:
+                              if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw31_25Cr48Sf512))
+                                break;
+                              else
+                                Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+                  
+                     case 3:
+                              if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr48Sf4096))
+                                break;
+                              else
+                                Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+                  
+                     default:
+                        
+                             Serial.println("Unrecognized cmd");       
+                             break;
+                      
+                    }
+                    
+                    Serial.print("Set LoRa mode to ");
+                    Serial.println(cmdValue,DEC);
+                    
+                   // save new operation mode in case of reboot
+                   my_Radioconfig.loramode=loraMode;
+                   my_Radioconfig.overwrite=1;
+                   EEPROM.put(0, my_Radioconfig);
+                  
                     
                     break;                                                               
 
@@ -885,7 +903,7 @@ memset(message,'0',100);
 
                   default:
       
-                    PRINT_CSTSTR("%s","Unrecognized cmd\n");       
+                    Serial.println("Unrecognized cmd");       
                     break;
             }
 
@@ -893,12 +911,26 @@ memset(message,'0',100);
           }
           delay(500);
           configNodes = false;            
-        }          
+        }
+
+
+
+          
+        }
+        else
+        {
+          Serial.println("No packet");
+        }
+      
+      
+      
+      } 
+      else{
+        Serial.println("Communications problems");  
+       
       }
-      else
-        PRINT_CSTSTR("%s","No packet\n");
-
-
+       
+         
         
     }while(configNodes);
  
