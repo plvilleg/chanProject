@@ -16,11 +16,11 @@
 
 //////////////////////////////////////////////////////////////////////////////////////
 //POWER SAVE
-//#define LOW_POWER 0
+#define LOW_POWER 0
 int SetWU_Hour = 18;
 int SetWU_Min = 35;
 
-const int wakeUpPin = 2;  // Use pin 2 as wake up pin
+const byte wakeUpPin = 3;  // Use pin 3 as wake up pin
 bool hibernate=false;
 //
 //////////////////////////////////////////////////////////////////////////////////////
@@ -43,7 +43,7 @@ RTC_DS3231 RTC;      //we are using the DS3231 RTC
 #define CLIENT_ADDRESS 3
 #define SERVER_ADDRESS 2
 #define CONFIG_NODES 1
-#define FORCE_DEFAULT_VALUE false
+#define FORCE_DEFAULT_VALUE
 #define DEFAULT_CHANNEL 915.00
 #define LORAMODE 0
 #define MAX_DBM 5
@@ -71,6 +71,7 @@ struct Radioconfig {
   uint8_t powerlevel;
   uint8_t SetWU_Hour;
   uint8_t SetWU_Min;
+  uint8_t AoD;
   uint8_t overwrite;
  // can add other fields such as LoRa mode,...
 };Radioconfig my_Radioconfig;
@@ -101,7 +102,7 @@ uint8_t message[RH_RF95_MAX_MESSAGE_LEN];
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 
 // CHANGE HERE THE TIME IN MINUTES BETWEEN 2 READING & TRANSMISSION
-unsigned int idlePeriodInMin = 60; //20
+unsigned int idlePeriodInMin = 0.1; //20
 
 #ifdef LOW_POWER
 unsigned int nCycle = idlePeriodInMin*60/LOW_POWER_PERIOD;
@@ -109,9 +110,9 @@ unsigned int nCycle = idlePeriodInMin*60/LOW_POWER_PERIOD;
 
 //Amount of data obtained
 int setAmountoOfData = 10;
-int numOfData = setAmountoOfData;
+int numOfData;
 
-bool configNodes = true;
+bool configNodes = false;
 int numParam = 0;
 
 int packetNumber = 0;
@@ -145,8 +146,9 @@ void loadConfig(){
         my_Radioconfig.loramode = LORAMODE;
         my_Radioconfig.powerlevel = MAX_DBM;
         my_Radioconfig.SetWU_Hour = SetWU_Hour;
-        my_Radioconfig.SetWU_Min = SetWU_Min;            
-        my_Radioconfig.overwrite=0;
+        my_Radioconfig.SetWU_Min = SetWU_Min;
+        my_Radioconfig.AoD = setAmountoOfData;
+        my_Radioconfig.overwrite=1;
         EEPROM.put(0, my_Radioconfig);
 
         node_address=my_Radioconfig.addr;
@@ -156,6 +158,7 @@ void loadConfig(){
         powerlevel=my_Radioconfig.powerlevel;
         SetWU_Hour=my_Radioconfig.SetWU_Hour; 
         SetWU_Min=my_Radioconfig.SetWU_Min;
+        setAmountoOfData=my_Radioconfig.AoD;
     #else
         // get back the node_addr
         if (my_Radioconfig.addr!=0 && my_Radioconfig.overwrite==1) {
@@ -219,6 +222,15 @@ void loadConfig(){
         }
         else
             Serial.println("Stored SetWU_Min is null"); 
+
+            // Amount of data
+        if (my_Radioconfig.AoD!=0 && my_Radioconfig.overwrite==1) {
+          
+            Serial.println("Used stored setAmountoOfData");
+            setAmountoOfData=my_Radioconfig.AoD;       
+        }
+        else
+            Serial.println("Stored SetWU_Min is null"); 
                    
     #endif  
         
@@ -241,7 +253,8 @@ void loadConfig(){
     my_Radioconfig.loramode = LORAMODE;
     my_Radioconfig.powerlevel = MAX_DBM;
     my_Radioconfig.SetWU_Hour = SetWU_Hour;
-    my_Radioconfig.SetWU_Min = SetWU_Min;    
+    my_Radioconfig.SetWU_Min = SetWU_Min;   
+    my_Radioconfig.AoD = setAmountoOfData; 
     my_Radioconfig.overwrite=1;
     EEPROM.put(0, my_Radioconfig);
     delay(2000);
@@ -290,6 +303,8 @@ long getCmdValue(int &i, char* strBuff=NULL) {
 void setup() 
 {
   Serial.println("CONFIGURING NODE 1");
+
+  pinMode(wakeUpPin, INPUT_PULLUP);
 
   Serial.begin(9600);
   while (!Serial) ; // Wait for serial port to be available
@@ -353,6 +368,9 @@ void setup()
   driver.setTxPower(powerlevel);
   
   Serial.println("Radio modem successfully configured..!");
+
+  
+   numOfData = setAmountoOfData;
   
 //////////////////////////////////////////////////////////////////////////////////////
 // Detph
@@ -544,18 +562,22 @@ void loop()
 //////////////////////////////////////////////////////////////////////////////////////
 //
 #ifdef CONFIG_NODES
-    memset(message,'\0',RH_RF95_MAX_MESSAGE_LEN);
+    
     if(configNodes){  
-    uint16_t  r_size;  
+    memset(message,'\0',RH_RF95_MAX_MESSAGE_LEN);
+    uint16_t  r_size; 
     EEPROM.get(0, my_Radioconfig);
-  
-    delay(2000);
     char sync[]="(@N";
-     
     sprintf(sync,"%s%d",sync,my_Radioconfig.addr);
     r_size=sprintf((char*)message, sync);
     
+    
     do{
+
+         
+      Serial.println((char*)message);
+    
+     
             
       if (manager.sendtoWait(message, r_size, SERVER_ADDRESS))
       {
@@ -578,36 +600,7 @@ void loop()
 
          int i=0;
          int cmdValue;
-    //     uint8_t tmp_length;
-//         sx1272.getSNR();
-//         sx1272.getRSSIpacket();
-//         
-//         tmp_length=sx1272._payloadlength;
-//
-//         sprintf((char*)message, "^p%d,%d,%d,%d,%d,%d,%d\n",
-//                   sx1272.packet_received.dst,
-//                   sx1272.packet_received.type,                   
-//                   sx1272.packet_received.src,
-//                   sx1272.packet_received.packnum, 
-//                   tmp_length,
-//                   sx1272._SNR,
-//                   sx1272._RSSIpacket);
-//                                   
-//               
-//         
-//         for ( ; i<tmp_length; i++) {
-//          // PRINT_STR("%c",(char)sx1272.packet_received.data[i]);
-//           
-//           message[i]=(char)sx1272.packet_received.data[i];
-//         }
-//
-//         message[i]='\0';
-
-//         PRINT_STR("%s :",(char*)message); 
-//         PRINTLN;
-//         PRINT_VALUE("%d \n", tmp_length);      
-//         PRINTLN;
-//         FLUSHOUTPUT;   
+    
 
         i=0;
 
@@ -637,7 +630,7 @@ void loop()
                       // set node addr        
                       node_address=cmdValue; 
 
-                      driver.setModeIdle();
+                      //driver.setModeIdle();
 
                       // Set the node address and print the result                                           
                       Serial.print("Setting LoRa node address to ");
@@ -742,11 +735,15 @@ void loop()
                       if (cmdValue < 0 )
                               cmdValue = 1;
                     
-                      // WakeUp hour      
-                      setAmountoOfData=cmdValue; 
+                      // Amount of data     
+                      setAmountoOfData=cmdValue;
+                      // save new SetWU_Min in case of reboot
+                      my_Radioconfig.AoD=cmdValue;
+                      my_Radioconfig.overwrite=1;
+                      EEPROM.put(0, my_Radioconfig);
                       
                       Serial.print("Set amount of data to ");
-                      Serial.println(setAmountoOfData,DEC);  
+                      Serial.println(cmdValue,DEC);  
                       break;              
 
 
@@ -807,7 +804,7 @@ void loop()
                     
                       Serial.print("Set LoRa node channel to ");
                       Serial.println(cmdValue,DEC);  
-                      driver.setModeIdle();
+                      //driver.setModeIdle();
                                            
                       // Select frequency channel
                       if(!driver.setFrequency(setNewChannel))
@@ -850,7 +847,7 @@ void loop()
                     cmdValue=getCmdValue(i);
                     // cannot set mode greater than 11 (11 being the LoRaWAN test mode)
                    
-                    driver.setModeIdle();
+                    //driver.setModeIdle();
 
                     switch (cmdValue){
                       case 0:
@@ -887,7 +884,7 @@ void loop()
                     Serial.println(cmdValue,DEC);
                     
                    // save new operation mode in case of reboot
-                   my_Radioconfig.loramode=loraMode;
+                   my_Radioconfig.loramode=cmdValue;
                    my_Radioconfig.overwrite=1;
                    EEPROM.put(0, my_Radioconfig);
                   
@@ -954,14 +951,13 @@ void loop()
       else  
         Serial.println("Could not switch LoRa module in sleep mode");
  
-      delay(50);
+      delay(500);
     
-      //nCycle = idlePeriodInMin*60/LOW_POWER_PERIOD;
+      nCycle = idlePeriodInMin*60/LOW_POWER_PERIOD;
+     
 
-      nCycle = 2;
-
-      if(numOfData < 1){
-        configNodes = false;        
+      if(numOfData == 1){
+        configNodes = true;        
       }
       
       if(numOfData == 0){
@@ -971,10 +967,10 @@ void loop()
       if(hibernate){
                
         Serial.println("Going to hiberbate");
-        delay(10);  
+        delay(500);  
 
         // Allow wake up pin to trigger interrupt on low.
-        attachInterrupt(0, wakeUp, LOW); //HIGH
+        attachInterrupt(digitalPinToInterrupt(wakeUpPin), wakeUp, LOW); //HIGH
         // Enter power down state with ADC and BOD module disabled.
         // Wake up when wake up pin is low.
         LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); 
@@ -985,7 +981,7 @@ void loop()
 //                TIMER2_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART3_OFF, 
 //                USART2_OFF, USART1_OFF, USART0_OFF, TWI_OFF);
 
-        detachInterrupt(0); 
+        detachInterrupt(digitalPinToInterrupt(wakeUpPin)); 
 
         //clear any pending alarms
 //        RTC.armAlarm(1, false);
@@ -997,7 +993,7 @@ void loop()
 //        // RTC.setAlarm(ALM1_MATCH_HOURS,0,20 , 16,0);   //set your wake-up time here
 //        RTC.alarmInterrupt(1, true);
 
-          
+          delay(1000);
           Serial.println("Wake up");
           hibernate = false;
           numOfData = setAmountoOfData;
@@ -1005,19 +1001,17 @@ void loop()
       } else {
          Serial.print("Next transmition at (min): ");
          Serial.println(idlePeriodInMin,DEC);
+
+         delay(500);
          
          for (int i=0; i<nCycle; i++) {   
-           // ATmega2560
+    
            LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
-  
-//            LowPower.idle(SLEEP_8S, ADC_OFF, TIMER5_OFF, TIMER4_OFF, TIMER3_OFF, 
-//                  TIMER2_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART3_OFF, 
-//                  USART2_OFF, USART1_OFF, USART0_OFF, TWI_OFF);
-                
-            Serial.print(".");
+   
         }
       }
       Serial.print(numOfData,DEC);
+      Serial.println();
       
       numOfData--;
       delay(50);

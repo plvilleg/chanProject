@@ -81,7 +81,7 @@ struct Radioconfig {
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Variables
-uint8_t data[250] = "/@A4#H18#M45#I2#D12#C12#P5#O0##";
+uint8_t data[250] = "/@A4#H18#M45#I0.1#D12#C12#P5#O0##";
 // Dont put this on the stack:
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 
@@ -468,6 +468,9 @@ void loop()
         Serial.println("Sent data GW OK..!");
     }
   }
+
+
+   
 //
 //////////////////////////////////////////////////////////////////////////////////////
 
