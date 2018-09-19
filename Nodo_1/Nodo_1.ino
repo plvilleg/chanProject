@@ -12,6 +12,7 @@
 #include <RHReliableDatagram.h>
 #include <RH_RF95.h>
 #include <SPI.h>
+#include <SD.h>
 #include <EEPROM.h>
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -72,6 +73,8 @@ struct Radioconfig {
   uint8_t SetWU_Hour;
   uint8_t SetWU_Min;
   uint8_t AoD;
+  uint16_t dataFileLogcount;
+  uint16_t dataFileLogver;
   uint8_t overwrite;
  // can add other fields such as LoRa mode,...
 };Radioconfig my_Radioconfig;
@@ -96,6 +99,9 @@ const uint32_t CH_12_900 = 915.00; // default channel 915MHz, the module is conf
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Variables
+DateTime unixTime;
+uint32_t timestamp;
+
 uint8_t data[100] = "Node 1";
 uint8_t message[RH_RF95_MAX_MESSAGE_LEN];
 // Dont put this on the stack:
@@ -116,6 +122,12 @@ bool configNodes = false;
 int numParam = 0;
 
 int packetNumber = 0;
+
+const int SDcardSelect = 53;
+
+File dataFileLog;
+File eventFileLog;
+String bufferLog;
 //
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -298,6 +310,69 @@ long getCmdValue(int &i, char* strBuff=NULL) {
 //////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////
+// open the file. note that only one file can be open at a time,
+// so you have to close this one before opening another.
+bool eventWriteLog(String tmpbuff){
+  
+  timestamp= millis();
+  
+  eventFileLog = SD.open("eventdatalog.txt", FILE_WRITE);
+
+  bufferLog = "";
+  bufferLog += String(timestamp);
+  bufferLog += ",";
+  bufferLog += tmpbuff;
+
+  if (eventFileLog) {
+    eventFileLog.println(bufferLog);
+    eventFileLog.close();
+    return true;
+  }
+   else {
+    return false;
+  }  
+}
+
+bool dataWriteLog(String bufferLog){
+
+  timestamp= millis();
+
+
+  if(dataFileLogcount > 8000)
+     dataFileLogver++;
+     
+  dataFileLog = SD.open("Datalog"+String(dataFileLogver)+".txt", FILE_WRITE);
+
+  bufferLog = "";
+  bufferLog += String(timestamp);
+  bufferLog += ",";
+  bufferLog += tmpbuff;
+
+  if (dataFileLog) {
+    dataFileLog.println(bufferLog);
+    dataFileLog.close();
+    //dataFileLogcount++;
+    return true;
+  }
+   else {
+    return false;
+  }  
+}
+
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
+// Reset function
+void resetNode(){
+  Serial.println("Restarting..!!");
+  delay(1000);
+}
+
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 // arduino setup function
 void setup() 
@@ -309,89 +384,13 @@ void setup()
   Serial.begin(9600);
   while (!Serial) ; // Wait for serial port to be available
 
-  loadConfig();
+  //Wire.begin();
 
-  if (!manager.init()){ // Defaults after init are 915.0MHz, 13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
-    Serial.println("INIT FAIL..! reboot NODE..!!");
-    while(true){
- 
-    }
-  }
-  
-  driver.setModeIdle();
-
-  switch (loraMode){
-    case 0:
-            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128))
-              break;
-            else
-              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
-    case 1:
-            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128))
-              break;
-            else
-              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
-
-   case 2:
-            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw31_25Cr48Sf512))
-              break;
-            else
-              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
-
-   case 3:
-            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr48Sf4096))
-              break;
-            else
-              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
-
-   default:
-      
-           Serial.println("Unrecognized cmd");       
-           break;
-    
-  }
-
-    
-  driver.setThisAddress(node_address);
-
-  #if (DEBUG_MODE > 0)
-      Serial.print("Node address is: ");
-      Serial.println(manager.thisAddress(),DEC);
-  
-  #endif
-  
-  driver.setPreambleLength(8); // Default is 8
- 
-  if(!driver.setFrequency(setNewChannel))
-    Serial.println("Error in frequency setting");
- 
-  driver.setTxPower(powerlevel);
-  
-  Serial.println("Radio modem successfully configured..!");
-
-  
-   numOfData = setAmountoOfData;
-  
 //////////////////////////////////////////////////////////////////////////////////////
-// Detph
-//   Wire.begin();
-//  while (!sensor.init()) {
-//    Serial.println("Init failed!");
-//    Serial.println("Are SDA/SCL connected correctly?");
-//    Serial.println("Blue Robotics Bar30: White = SDA, Green = SCL");
-//    Serial.println();
-//    delay(5000);
-//  }
-//  sensor.setModel(MS5837::MS5837_30BA);
-//  sensor.setFluidDensity(1003); // kg/m^3 (freshwater, 1029 for seawater)
-//  Serial.println("MS5837 successfully configured");
-//
-//
 ////Init RTC module
-//#ifdef LOW_POWER
-////Set pin D3 as INPUT for accepting the interrupt signal from DS3231
-//  //pinMode(wakePin, INPUT);
-//
+#ifdef LOW_POWER
+//Set pin D3 as INPUT for accepting the interrupt signal from DS3231
+//  
 //  //Initialize communication with the clock
 // 
 //  RTC.begin();
@@ -414,7 +413,136 @@ void setup()
 //  RTC.setAlarm(ALM1_MATCH_HOURS,0,SetWU_Min, SetWU_Hour,0);   //set your wake-up time here
 //  RTC.alarmInterrupt(1, true);
 //  Serial.println("RTC successfully configured");
-//#endif
+#endif
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
+//  Config system time
+    //timestamp= unixTime.unixtime();
+//  
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
+// SD card Config
+Serial.print("Initializing SD card...");
+
+  // see if the card is present and can be initialized:
+  if (!SD.begin(SDcardSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    //while (1);
+    //resetNode();
+  }
+  Serial.println("card initialized.");
+
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+  loadConfig();
+
+  if (!manager.init()){ // Defaults after init are 915.0MHz, 13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
+    Serial.println("INIT FAIL..! reboot NODE..!!");
+    if(!eventWriteLog("INIT FAIL..! reboot NODE..!!"))
+      resetNode();
+  }
+  
+  driver.setModeIdle();
+
+  switch (loraMode){
+    case 0:
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128))
+              break;
+            else{
+              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+              if(!eventWriteLog("SET LoraMode FAIL..! reboot NODE..!!"))
+                resetNode();
+            }
+    case 1:
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128))
+              break;
+            else{
+              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+              if(!eventWriteLog("SET LoraMode FAIL..! reboot NODE..!!"))
+                resetNode();
+            }
+   case 2:
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw31_25Cr48Sf512))
+              break;
+            else{
+              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+              if(!eventWriteLog("SET LoraMode FAIL..! reboot NODE..!!"))
+                resetNode();
+            }
+
+   case 3:
+            if(driver.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr48Sf4096))
+              break;
+            else{
+              Serial.println("SET LoraMode FAIL..! reboot NODE..!!");
+              if(!eventWriteLog("SET LoraMode FAIL..! reboot NODE..!!"))
+                resetNode();
+            }
+
+   default:
+      
+           Serial.println("Unrecognized cmd"); 
+           if(!eventWriteLog("Unrecognized cmd"))
+                resetNode();      
+           break;
+    
+  }
+
+    
+  manager.setThisAddress(node_address);
+
+  #if (DEBUG_MODE > 0)
+      Serial.print("Node address is: ");
+      Serial.println(manager.thisAddress(),DEC);
+  
+  #endif
+  
+  driver.setPreambleLength(8); // Default is 8
+ 
+  if(!driver.setFrequency(setNewChannel))
+    Serial.println("Error in frequency setting");
+ 
+  driver.setTxPower(powerlevel);
+  
+  Serial.println("Radio modem successfully configured..!");
+
+   bufferLog += String(millis());
+   bufferLog += ",";
+   bufferLog+="Radio modem successfully configured..!";
+  
+   numOfData = setAmountoOfData;
+
+
+   
+  
+//////////////////////////////////////////////////////////////////////////////////////
+// Detph
+//   Wire.begin();
+//  while (!sensor.init()) {
+//    Serial.println("Init failed!");
+//    Serial.println("Are SDA/SCL connected correctly?");
+//    Serial.println("Blue Robotics Bar30: White = SDA, Green = SCL");
+//    Serial.println();
+//    delay(5000);
+//  }
+//  sensor.setModel(MS5837::MS5837_30BA);
+//  sensor.setFluidDensity(1003); // kg/m^3 (freshwater, 1029 for seawater)
+//  Serial.println("MS5837 successfully configured");
+//
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////
+//Boot log
+
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
 
 }
 //
@@ -541,7 +669,7 @@ void loop()
     uint8_t from;   
     if (manager.recvfromAckTimeout(buf, &len, 3000, &from))
     {
-      Serial.print("got reply from CENTRAL NODE");
+      Serial.print("got reply from CENTRAL NODE: ");
       Serial.print(from, HEX);
       Serial.print(": ");
       Serial.println((char*)buf);
@@ -596,6 +724,7 @@ void loop()
         {
           Serial.print("got message config from GW: ");
           Serial.println((char*)message);
+          
           driver.setModeIdle();
 
          int i=0;
@@ -622,27 +751,25 @@ void loop()
                       cmdValue=getCmdValue(i);
                       
                       // cannot set addr greater than 255
-                      if (cmdValue > 250)
-                              cmdValue = 250;
+                      if (cmdValue > 254)
+                              cmdValue = 254;
                       // cannot set addr lower than 2 since 0 is broadcast and 1 is for gateway
                       if (cmdValue < 2)
                               cmdValue = 3;
                       // set node addr        
-                      node_address=cmdValue; 
-
-                      //driver.setModeIdle();
-
+                                           
                       // Set the node address and print the result                                           
                       Serial.print("Setting LoRa node address to ");
-                      Serial.println(node_address); 
+                      Serial.println(cmdValue); 
                       Serial.println("..."); 
                       
-                      driver.setThisAddress(node_address);
+                      manager.setThisAddress(cmdValue);
+                      delay(100);
                       Serial.print("LoRa node address set to: ");
                       Serial.println(manager.thisAddress(),DEC);
            
                       // save new node_addr in case of reboot
-                      my_Radioconfig.addr=node_address;
+                      my_Radioconfig.addr=cmdValue;
                       my_Radioconfig.overwrite=1;
                       EEPROM.put(0, my_Radioconfig);
             
